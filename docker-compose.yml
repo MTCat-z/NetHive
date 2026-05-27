@@ -1,0 +1,94 @@
+version: "3.9"
+
+services:
+  # Redis — 消息队列 & 结果后端
+  redis:
+    image: redis:7-alpine
+    container_name: ops_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - ops_net
+
+  # FastAPI 后端
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ops_backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - db_data:/app/data
+    depends_on:
+      - redis
+    networks:
+      - ops_net
+    # 宿主机需预装 nmap & iperf3，容器通过 host network 或挂载方式调用
+    # 如需直接调用宿主机二进制，可改为 network_mode: host
+
+  # Celery Worker — 执行异步扫描/测速任务
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ops_celery
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    command: celery -A app.tasks.worker worker --loglevel=info --concurrency=4 -Q default,scan,iperf,topology
+    volumes:
+      - ./backend:/app
+      - db_data:/app/data
+    depends_on:
+      - redis
+      - backend
+    networks:
+      - ops_net
+
+  # Celery Beat — 定时任务（可选，预留）
+  celery_beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ops_celery_beat
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    command: celery -A app.tasks.worker beat --loglevel=info
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - redis
+    networks:
+      - ops_net
+
+  # Nginx — 反向代理 & 前端静态文件托管
+  nginx:
+    image: nginx:alpine
+    container_name: ops_nginx
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./frontend/dist:/usr/share/nginx/html:ro
+    depends_on:
+      - backend
+    networks:
+      - ops_net
+
+volumes:
+  redis_data:
+  db_data:
+
+networks:
+  ops_net:
+    driver: bridge

@@ -1,0 +1,50 @@
+<template>
+  <div>
+    <el-card shadow="never" style="margin-bottom:16px"><template #header>新建 Iperf3 测速任务</template>
+      <el-form :model="form" :rules="rules" ref="formRef" inline label-width="90px">
+        <el-form-item label="服务端IP" prop="server_host"><el-input v-model="form.server_host" placeholder="192.168.1.100" style="width:180px" /></el-form-item>
+        <el-form-item label="端口"><el-input-number v-model="form.server_port" :min="1" :max="65535" style="width:120px" /></el-form-item>
+        <el-form-item label="协议"><el-select v-model="form.protocol" style="width:90px"><el-option label="TCP" value="tcp" /><el-option label="UDP" value="udp" /></el-select></el-form-item>
+        <el-form-item label="时长(秒)"><el-input-number v-model="form.duration" :min="3" :max="300" style="width:100px" /></el-form-item>
+        <el-form-item><el-button type="primary" :loading="submitting" @click="startIperf">开始测速</el-button></el-form-item>
+      </el-form>
+    </el-card>
+    <el-card shadow="never">
+      <template #header><el-row justify="space-between" align="middle"><span>测速任务记录</span><el-button size="small" @click="loadTasks">刷新</el-button></el-row></template>
+      <el-table :data="tasks" v-loading="loading" stripe border>
+        <el-table-column prop="id" label="ID" width="60" />
+        <el-table-column prop="server_host" label="服务端" min-width="130" />
+        <el-table-column prop="protocol" label="协议" width="70" />
+        <el-table-column prop="status" label="状态" width="100"><template #default="{ row }"><el-tag :type="statusMap[row.status]?.type">{{ statusMap[row.status]?.label }}</el-tag></template></el-table-column>
+        <el-table-column label="带宽" width="110"><template #default="{ row }">{{ row.bandwidth_mbps!=null?row.bandwidth_mbps+' Mbps':'-' }}</template></el-table-column>
+        <el-table-column label="抖动/丢包" width="120"><template #default="{ row }">{{ row.jitter_ms!=null?row.jitter_ms+'ms / '+row.lost_percent+'%':'-' }}</template></el-table-column>
+        <el-table-column prop="created_at" label="创建时间" width="160" />
+        <el-table-column label="操作" width="160" fixed="right"><template #default="{ row }"><el-button size="small" type="primary" @click="viewResult(row)">图表</el-button><el-button size="small" type="danger" @click="delTask(row)">删除</el-button></template></el-table-column>
+      </el-table>
+    </el-card>
+    <el-dialog v-model="resultDlg" title="测速结果" width="860px">
+      <div v-if="curTask">
+        <el-row :gutter="16" style="margin-bottom:16px"><el-col :span="6"><el-statistic title="带宽" :value="curTask.bandwidth_mbps??0" suffix="Mbps" /></el-col><el-col :span="6" v-if="curTask.protocol==='udp'"><el-statistic title="抖动" :value="curTask.jitter_ms??0" suffix="ms" /></el-col><el-col :span="6" v-if="curTask.protocol==='udp'"><el-statistic title="丢包率" :value="curTask.lost_percent??0" suffix="%" /></el-col></el-row>
+        <div ref="chartDom" style="height:300px"></div>
+      </div>
+    </el-dialog>
+  </div>
+</template>
+<script setup>
+import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import * as echarts from 'echarts'
+import { iperfApi } from '@/api'
+const loading=ref(false),submitting=ref(false),tasks=ref([]),resultDlg=ref(false),curTask=ref(null),chartDom=ref(null),formRef=ref(null)
+let chartInstance=null,pollTimer=null
+const form=reactive({server_host:'',server_port:5201,protocol:'tcp',duration:10,parallel:1,reverse:false})
+const rules={server_host:[{required:true,message:'请输入服务端IP'}]}
+const statusMap={pending:{label:'等待中',type:'info'},running:{label:'测速中',type:'warning'},completed:{label:'已完成',type:'success'},failed:{label:'失败',type:'danger'}}
+async function loadTasks(){loading.value=true;try{const r=await iperfApi.list({size:50});tasks.value=r.items}finally{loading.value=false}}
+async function startIperf(){await formRef.value.validate();submitting.value=true;try{await iperfApi.start(form);ElMessage.success('测速任务已提交');loadTasks()}finally{submitting.value=false}}
+async function viewResult(row){const r=await iperfApi.get(row.id);curTask.value=r;resultDlg.value=true;await nextTick();renderChart(r)}
+function renderChart(task){if(!chartDom.value)return;if(!chartInstance)chartInstance=echarts.init(chartDom.value);let intervals=[];if(task.result_json){try{const d=JSON.parse(task.result_json);intervals=(d.intervals??[]).map((iv,i)=>({t:i+1,bw:((iv.sum?.bits_per_second??0)/1e6).toFixed(2)}))}catch{}}chartInstance.setOption({tooltip:{trigger:'axis'},xAxis:{type:'category',data:intervals.map(i=>i.t),name:'时间(s)'},yAxis:{type:'value',name:'Mbps'},series:[{name:'带宽',type:'line',data:intervals.map(i=>i.bw),smooth:true,areaStyle:{opacity:0.1}}]})}
+async function delTask(row){await ElMessageBox.confirm('确定删除?','确认',{type:'warning'});await iperfApi.delete(row.id);ElMessage.success('已删除');loadTasks()}
+onMounted(()=>{loadTasks();pollTimer=setInterval(loadTasks,5000)})
+onUnmounted(()=>{clearInterval(pollTimer);chartInstance?.dispose()})
+</script>
