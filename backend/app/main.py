@@ -14,9 +14,31 @@ from app.core.database import create_db_and_tables
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期：启动时初始化数据库"""
+    """应用生命周期：启动时初始化数据库并创建默认管理员"""
     create_db_and_tables()
+    _seed_default_admin()
     yield
+
+
+def _seed_default_admin():
+    """如果不存在 admin 用户，自动创建默认管理员"""
+    from sqlmodel import Session, select
+    from app.core.database import engine
+    from app.core.auth import hash_password
+    from app.models.user import User
+
+    with Session(engine) as session:
+        admin_count = len(session.exec(select(User).where(User.role == "admin")).all())
+        if admin_count == 0:
+            admin = User(
+                username=settings.DEFAULT_ADMIN_USERNAME,
+                password_hash=hash_password(settings.DEFAULT_ADMIN_PASSWORD),
+                role="admin",
+                must_change_password=True,
+            )
+            session.add(admin)
+            session.commit()
+            print(f"[init] 已创建默认管理员: {settings.DEFAULT_ADMIN_USERNAME}")
 
 
 app = FastAPI(

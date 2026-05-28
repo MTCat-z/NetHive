@@ -54,14 +54,17 @@ def run_topology_discovery(self, task_id: int):
 
     try:
         # Phase 1: Nmap ping 扫描发现存活主机
-        nm = nmap.PortScanner()
+        nm = nmap.PortScanner(nmap_search_path=[settings.NMAP_PATH])
         nm.scan(hosts=target, arguments='-sn')
 
         discovered_hosts = []
         for host in nm.all_hosts():
             if nm[host].state() == 'up':
-                mac = nm[host].addresses().get('mac', '')
-                vendor = nm[host].vendor().get(mac, '') if mac else ''
+                # addresses / vendor 是字典键，不是方法
+                addr_dict = nm[host].get('addresses', {})
+                mac = addr_dict.get('mac', '')
+                vendor_dict = nm[host].get('vendor', {})
+                vendor = vendor_dict.get(mac, '') if mac else ''
                 discovered_hosts.append({
                     'ip': host,
                     'hostname': nm[host].hostname() or host,

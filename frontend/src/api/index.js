@@ -1,4 +1,30 @@
 import request from './request'
+
+// 认证
+export const authApi = {
+  login: (d) => {
+    const form = new URLSearchParams()
+    form.append('username', d.username)
+    form.append('password', d.password)
+    return request.post('/auth/login', form)
+  },
+  changePassword: (d) => request.post('/auth/change-password', d),
+}
+
+// 用户管理（管理员）
+export const userApi = {
+  list: (p) => request.get('/users', { params: p }),
+  create: (d) => request.post('/users', d),
+  update: (id, d) => request.put('/users/' + id, d),
+  resetPassword: (id, d) => request.post('/users/' + id + '/reset-password', d),
+  delete: (id) => request.delete('/users/' + id),
+}
+
+// 审计日志（管理员）
+export const auditApi = {
+  list: (p) => request.get('/audit', { params: p }),
+}
+
 export const assetApi = {
   list: (p) => request.get('/assets', { params: p }),
   get: (id) => request.get('/assets/' + id),

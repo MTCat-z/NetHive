@@ -28,7 +28,7 @@ def _migrate_columns():
 
 
 def create_db_and_tables():
-    from app.models import asset, scan_task, iperf_task, broadband, topology  # noqa: F401
+    from app.models import asset, scan_task, iperf_task, broadband, topology, user  # noqa: F401
     SQLModel.metadata.create_all(engine)
     if "sqlite" in settings.DATABASE_URL:
         _migrate_columns()
