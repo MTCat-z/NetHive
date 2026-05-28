@@ -167,6 +167,33 @@ def get_discovery_task(task_id: int, session: Session = Depends(get_session)):
     return task
 
 
+@router.delete('/discover/tasks/{task_id}', status_code=204)
+def delete_discovery_task(task_id: int, session: Session = Depends(get_session)):
+    task = session.get(TopologyDiscoveryTask, task_id)
+    if not task:
+        raise HTTPException(404, '任务不存在')
+    if task.status == 'running':
+        raise HTTPException(400, '运行中的任务不能删除')
+    # 删除该任务产生的节点和边
+    nodes = session.exec(
+        select(TopologyNode).where(TopologyNode.discovery_task_id == task_id)
+    ).all()
+    node_ids = [n.id for n in nodes]
+    if node_ids:
+        related_edges = session.exec(
+            select(TopologyEdge).where(
+                col(TopologyEdge.source_node_id).in_(node_ids)
+                | col(TopologyEdge.target_node_id).in_(node_ids)
+            )
+        ).all()
+        for edge in related_edges:
+            session.delete(edge)
+    for node in nodes:
+        session.delete(node)
+    session.delete(task)
+    session.commit()
+
+
 # ---------- 导入到资产管理 ----------
 
 @router.post('/import/{node_id}', summary='将节点导入资产管理')

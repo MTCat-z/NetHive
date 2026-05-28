@@ -36,9 +36,19 @@
           <template #header><span style="font-weight:600">发现任务</span></template>
           <div v-if="!tasks.length" style="color:#999;font-size:13px">暂无任务</div>
           <div v-for="t in tasks" :key="t.id" style="margin-bottom:8px;padding:8px;background:#fafafa;border-radius:4px">
-            <div style="font-size:13px">{{ t.target_subnet }}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span style="font-size:13px">{{ t.target_subnet }}</span>
+              <el-button size="small" type="danger" link @click="deleteTask(t)" :disabled="t.status==='running'">删除</el-button>
+            </div>
             <el-progress :percentage="t.progress" :status="t.status==='completed'?'success':t.status==='failed'?'exception':''" :stroke-width="6" style="margin:4px 0" />
-            <div style="font-size:12px;color:#999">节点: {{ t.nodes_discovered }} | 连线: {{ t.edges_inferred }}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span style="font-size:12px;color:#999">节点: {{ t.nodes_discovered }} | 连线: {{ t.edges_inferred }}</span>
+              <el-tag v-if="t.status==='failed'" size="small" type="danger" style="font-size:11px" :title="t.error_message">失败</el-tag>
+              <el-tag v-else-if="t.status==='running'" size="small" type="warning" style="font-size:11px">运行中</el-tag>
+              <el-tag v-else-if="t.status==='completed'" size="small" type="success" style="font-size:11px">完成</el-tag>
+              <el-tag v-else size="small" style="font-size:11px">{{ t.status }}</el-tag>
+            </div>
+            <div v-if="t.status==='failed' && t.error_message" style="font-size:11px;color:#f56c6c;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" :title="t.error_message">{{ t.error_message }}</div>
           </div>
         </el-card>
         <!-- 节点详情 -->
@@ -308,6 +318,17 @@ async function deleteNode(node) {
 async function deleteEdge(edge) {
   await topologyApi.deleteEdge(edge.id)
   ElMessage.success('已删除'); selectedEdge.value = null; loadGraph()
+}
+async function deleteTask(task) {
+  try {
+    await ElMessageBox.confirm(`确定删除该发现任务及其发现的节点和连线？`, '确认', { type: 'warning' })
+    await topologyApi.deleteDiscoveryTask(task.id)
+    ElMessage.success('任务已删除')
+    tasks.value = tasks.value.filter(t => t.id !== task.id)
+    loadGraph()
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error('删除失败')
+  }
 }
 async function importNode(node) {
   await topologyApi.importNode(node.id, { name: node.name, device_type: node.device_type })

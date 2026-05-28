@@ -1,0 +1,24 @@
+# 排除前端依赖（容器内 npm ci 重新安装）
+frontend/node_modules/
+frontend/.cache/
+
+# 排除开发文件
+backend/__pycache__/
+backend/**/__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+
+# 排除数据文件
+backend/data/
+*.db
+*.sqlite*
+
+# 排除版本控制
+.git/
+.gitignore
+
+# 排除文档（不影响构建）
+*.md
+deploy/README.md

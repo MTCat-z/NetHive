@@ -36,7 +36,11 @@ const form=reactive({target:'',scan_type:'ping',ports:'',description:''})
 const rules={target:[{required:true,message:'请输入扫描目标'}]}
 const statusMap={pending:{label:'等待中',type:'info'},running:{label:'扫描中',type:'warning'},completed:{label:'已完成',type:'success'},failed:{label:'失败',type:'danger'}}
 let pollTimer=null
-async function loadTasks(){loading.value=true;try{const r=await scanApi.list({size:50});tasks.value=r.items||[]}catch(e){console.error('加载扫描任务失败',e)}finally{loading.value=false}}
+const isFirstLoad=ref(true)
+async function loadTasks(){
+  if(isFirstLoad.value){loading.value=true;isFirstLoad.value=false}
+  try{const r=await scanApi.list({size:50});tasks.value=r.items||[]}catch(e){console.error('加载扫描任务失败',e)}finally{loading.value=false}
+}
 async function startScan(){await formRef.value.validate();submitting.value=true;try{await scanApi.start(form);ElMessage.success('扫描任务已提交');loadTasks()}finally{submitting.value=false}}
 async function viewResult(row){const r=await scanApi.get(row.id);curTask.value=r;resultHosts.value=r.result_json?JSON.parse(r.result_json).hosts??[]:[]; resultDlg.value=true}
 async function delTask(row){await ElMessageBox.confirm('确定删除?','确认',{type:'warning'});await scanApi.delete(row.id);ElMessage.success('已删除');loadTasks()}

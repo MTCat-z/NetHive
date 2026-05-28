@@ -73,6 +73,7 @@ export const topologyApi = {
   discover: (d) => request.post('/topology/discover', d),
   getDiscoveryTask: (id) => request.get('/topology/discover/tasks/' + id),
   listDiscoveryTasks: (p) => request.get('/topology/discover/tasks', { params: p }),
+  deleteDiscoveryTask: (id) => request.delete('/topology/discover/tasks/' + id),
   addNode: (d) => request.post('/topology/nodes', d),
   updateNode: (id, d) => request.put('/topology/nodes/' + id, d),
   updateNodePosition: (id, d) => request.patch('/topology/nodes/' + id + '/position', d),

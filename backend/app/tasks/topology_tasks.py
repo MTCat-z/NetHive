@@ -54,8 +54,10 @@ def run_topology_discovery(self, task_id: int):
 
     try:
         # Phase 1: Nmap ping 扫描发现存活主机
+        # 使用 -PE (ICMP echo) 替代默认 -sn，减少 Docker 网桥代理导致的误报
+        # 默认 -sn 用 TCP ACK，Docker 网关会对所有地址代理应答
         nm = nmap.PortScanner(nmap_search_path=[settings.NMAP_PATH])
-        nm.scan(hosts=target, arguments='-sn')
+        nm.scan(hosts=target, arguments='-sn -PE')
 
         discovered_hosts = []
         for host in nm.all_hosts():
@@ -71,6 +73,19 @@ def run_topology_discovery(self, task_id: int):
                     'mac': mac,
                     'vendor': vendor,
                 })
+
+        # 检查可能的误报：如果 /24 子网中发现超过 200 台主机，很可能是网桥代理
+        subnet_size = 256
+        try:
+            net = ipaddress.ip_network(target, strict=False)
+            subnet_size = net.num_addresses
+        except ValueError:
+            pass
+        if len(discovered_hosts) > subnet_size * 0.8:
+            logger.warning(
+                f'发现 {len(discovered_hosts)}/{subnet_size} 台主机，'
+                f'可能是 Docker 网桥代理导致的误报。建议在宿主机上运行 Celery worker。'
+            )
 
         # Phase 2: 推断网关 (子网中最低 IP)
         if discovered_hosts:

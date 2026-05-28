@@ -37,10 +37,11 @@ import * as echarts from 'echarts'
 import { iperfApi } from '@/api'
 const loading=ref(false),submitting=ref(false),tasks=ref([]),resultDlg=ref(false),curTask=ref(null),chartDom=ref(null),formRef=ref(null)
 let chartInstance=null,pollTimer=null
+const isFirstLoad=ref(true)
 const form=reactive({server_host:'',server_port:5201,protocol:'tcp',duration:10,parallel:1,reverse:false})
 const rules={server_host:[{required:true,message:'请输入服务端IP'}]}
 const statusMap={pending:{label:'等待中',type:'info'},running:{label:'测速中',type:'warning'},completed:{label:'已完成',type:'success'},failed:{label:'失败',type:'danger'}}
-async function loadTasks(){loading.value=true;try{const r=await iperfApi.list({size:50});tasks.value=r.items}finally{loading.value=false}}
+async function loadTasks(){if(isFirstLoad.value){loading.value=true;isFirstLoad.value=false};try{const r=await iperfApi.list({size:50});tasks.value=r.items}finally{loading.value=false}}
 async function startIperf(){await formRef.value.validate();submitting.value=true;try{await iperfApi.start(form);ElMessage.success('测速任务已提交');loadTasks()}finally{submitting.value=false}}
 async function viewResult(row){const r=await iperfApi.get(row.id);curTask.value=r;resultDlg.value=true;await nextTick();renderChart(r)}
 function renderChart(task){if(!chartDom.value)return;if(!chartInstance)chartInstance=echarts.init(chartDom.value);let intervals=[];if(task.result_json){try{const d=JSON.parse(task.result_json);intervals=(d.intervals??[]).map((iv,i)=>({t:i+1,bw:((iv.sum?.bits_per_second??0)/1e6).toFixed(2)}))}catch{}}chartInstance.setOption({tooltip:{trigger:'axis'},xAxis:{type:'category',data:intervals.map(i=>i.t),name:'时间(s)'},yAxis:{type:'value',name:'Mbps'},series:[{name:'带宽',type:'line',data:intervals.map(i=>i.bw),smooth:true,areaStyle:{opacity:0.1}}]})}

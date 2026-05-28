@@ -1,0 +1,52 @@
+# ============================================================
+# Docker Compose Linux 部署覆盖配置
+# 用法: docker compose -f docker-compose.yml -f deploy/docker-compose.linux.yml up -d
+#
+# 核心改动:
+#   1. 所有服务使用 host 网络模式 → nmap/iperf3 直接访问物理网卡
+#   2. Nginx 使用多阶段构建（自动编译前端 Vue 项目）
+#   3. Redis/Celery 连接地址改为 localhost
+#
+# 注意:
+#   - host 网络模式下 ports 配置会被忽略（Docker 会打印警告，可安全忽略）
+#   - host 网络模式下容器直接使用宿主机网络栈，无需端口映射
+#   - 确保宿主机 80、6379、8000 端口未被其他服务占用
+# ============================================================
+
+services:
+  # Redis — 直接使用宿主机端口
+  redis:
+    network_mode: host
+
+  # FastAPI 后端
+  backend:
+    network_mode: host
+    environment:
+      REDIS_URL: redis://127.0.0.1:6379/0
+      CELERY_BROKER_URL: redis://127.0.0.1:6379/0
+      CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/1
+
+  # Celery Worker — host 网络使 nmap 直接扫描物理网段
+  celery_worker:
+    network_mode: host
+    environment:
+      REDIS_URL: redis://127.0.0.1:6379/0
+      CELERY_BROKER_URL: redis://127.0.0.1:6379/0
+      CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/1
+
+  # Celery Beat
+  celery_beat:
+    network_mode: host
+    environment:
+      REDIS_URL: redis://127.0.0.1:6379/0
+      CELERY_BROKER_URL: redis://127.0.0.1:6379/0
+      CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/1
+
+  # Nginx — 多阶段构建前端 + host 网络反代后端
+  nginx:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.nginx
+    network_mode: host
+    volumes:
+      - ./nginx.linux.conf:/etc/nginx/conf.d/default.conf:ro
