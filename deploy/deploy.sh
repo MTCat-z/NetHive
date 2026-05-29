@@ -24,19 +24,29 @@ set -euo pipefail
 
 # ── 全局变量 ──
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# 项目根目录：如果脚本在 deploy/ 下，则向上一级；否则就是当前目录
-if [[ -f "$SCRIPT_DIR/../docker-compose.yml" ]]; then
+# 项目根目录推断逻辑：
+#   1. 脚本在 deploy/ 子目录内 → 项目根 = deploy 的上一级
+#   2. 当前目录包含 docker-compose.yml → 项目根 = 当前目录
+#   3. 都不满足 → 留空，由 setup_project() 引导用户克隆或指定
+PROJECT_DIR=""
+if [[ -f "$SCRIPT_DIR/../docker-compose.yml" && -d "$SCRIPT_DIR/../backend" ]]; then
     PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-else
-    PROJECT_DIR="$SCRIPT_DIR"
+elif [[ -f "$PWD/docker-compose.yml" && -d "$PWD/backend" ]]; then
+    PROJECT_DIR="$PWD"
 fi
-DEPLOY_DIR="$PROJECT_DIR/deploy"
-ENV_FILE="$PROJECT_DIR/backend/.env"
+DEPLOY_DIR=""
+ENV_FILE=""
 IS_LINUX=false
 USE_LOCAL_REDIS=false
 AUTO_MODE=false
 GIT_REPO=""
 WEB_PORT=8080       # bridge 模式默认端口；Linux host 模式会自动切换为 80
+
+# 根据 PROJECT_DIR 刷新所有派生路径
+refresh_paths() {
+    DEPLOY_DIR="$PROJECT_DIR/deploy"
+    ENV_FILE="$PROJECT_DIR/backend/.env"
+}
 
 # 颜色
 RED='\033[0;31m'
@@ -275,37 +285,109 @@ install_system_tools() {
 setup_project() {
     section "2/5  获取项目代码"
 
-    # 检查是否已有项目文件
-    if [[ -f "$PROJECT_DIR/docker-compose.yml" && -d "$PROJECT_DIR/backend" && -d "$PROJECT_DIR/frontend" ]]; then
-        success "项目文件已存在: $PROJECT_DIR"
+    # ── 情况 1: 已经定位到项目目录 ──
+    if [[ -n "$PROJECT_DIR" && -f "$PROJECT_DIR/docker-compose.yml" && -d "$PROJECT_DIR/backend" && -d "$PROJECT_DIR/frontend" ]]; then
+        success "项目文件已就绪: $PROJECT_DIR"
+        refresh_paths
         return 0
     fi
 
-    # 如果 deploy 目录存在但项目不在，说明是单独复制的 deploy 目录
-    if [[ -n "$GIT_REPO" ]]; then
-        info "从 Git 仓库克隆项目..."
-        git clone "$GIT_REPO" "$PROJECT_DIR"
-        success "项目已克隆到: $PROJECT_DIR"
-        return 0
+    # ── 情况 2: 项目不存在，需要获取 ──
+    echo ""
+    info "未检测到项目文件，请选择获取方式:"
+    echo "  1) 从 Git 仓库克隆"
+    echo "  2) 指定已有的项目目录"
+    echo ""
+
+    local choice=""
+    if [[ "$AUTO_MODE" == "true" ]]; then
+        choice="1"
+    else
+        read -rp "$(echo -e "${YELLOW}请选择 (1/2)${NC} [1]: ")" choice
+        choice="${choice:-1}"
     fi
 
-    if [[ "$AUTO_MODE" != "true" ]]; then
-        echo ""
-        info "请通过以下方式之一获取项目代码:"
-        echo "  1. Git 克隆:  git clone <仓库地址> $PROJECT_DIR"
-        echo "  2. 解压归档:  tar xzf ops-platform.tar.gz -C $PROJECT_DIR"
-        echo "  3. rsync 同步: rsync -avz user@host:/path/to/ops-platform/ $PROJECT_DIR/"
-        echo ""
-        read -rp "$(echo -e "${YELLOW}请输入 Git 仓库地址（回车跳过）:${NC} ")" GIT_REPO
-        if [[ -n "$GIT_REPO" ]]; then
-            git clone "$GIT_REPO" "$PROJECT_DIR"
-            success "项目已克隆"
-            return 0
+    if [[ "$choice" == "2" ]]; then
+        # 用户指定已有目录
+        local user_path=""
+        read -rp "$(echo -e "${YELLOW}请输入项目目录绝对路径${NC}: ")" user_path
+        if [[ -z "$user_path" ]]; then
+            error "路径不能为空"
+            exit 1
         fi
+        # 展开 ~ 为 home
+        user_path="${user_path/#\~/$HOME}"
+        if [[ ! -f "$user_path/docker-compose.yml" || ! -d "$user_path/backend" ]]; then
+            error "$user_path 下未找到完整的项目文件"
+            exit 1
+        fi
+        PROJECT_DIR="$(cd "$user_path" && pwd)"
+        success "使用已有项目: $PROJECT_DIR"
+    else
+        # Git 克隆
+        local repo_url=""
+        if [[ -n "$GIT_REPO" ]]; then
+            repo_url="$GIT_REPO"
+        else
+            read -rp "$(echo -e "${YELLOW}请输入 Git 仓库地址${NC}: ")" repo_url
+        fi
+        if [[ -z "$repo_url" ]]; then
+            error "仓库地址不能为空"
+            exit 1
+        fi
+
+        # 从仓库 URL 提取项目名
+        local repo_name
+        repo_name=$(basename "$repo_url" .git)
+
+        # 默认安装到 /opt 下，如果 /opt 不可写则用当前目录
+        local install_base="/opt"
+        if [[ ! -w "$install_base" ]]; then
+            install_base="$PWD"
+        fi
+        local install_dir="$install_base/$repo_name"
+
+        # 如果目标目录已存在且非空，让用户确认
+        if [[ -d "$install_dir" && "$(ls -A "$install_dir" 2>/dev/null)" ]]; then
+            warn "目录已存在: $install_dir"
+            if [[ "$AUTO_MODE" != "true" ]]; then
+                read -rp "$(echo -e "${YELLOW}是否删除后重新克隆？(y/N)${NC} ")" confirm
+                if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+                    rm -rf "$install_dir"
+                else
+                    # 检查已有目录是否包含完整项目
+                    if [[ -f "$install_dir/docker-compose.yml" && -d "$install_dir/backend" ]]; then
+                        info "已有目录包含完整项目文件，跳过克隆"
+                        PROJECT_DIR="$install_dir"
+                        refresh_paths
+                        success "使用已有项目: $PROJECT_DIR"
+                        return 0
+                    fi
+                    error "已有目录不包含项目文件，请手动处理"
+                    exit 1
+                fi
+            fi
+        fi
+
+        info "克隆项目到: $install_dir"
+        git clone "$repo_url" "$install_dir"
+        PROJECT_DIR="$install_dir"
+        success "项目已克隆到: $PROJECT_DIR"
     fi
 
-    error "项目文件不完整，请先将代码复制到 $PROJECT_DIR"
-    exit 1
+    # 复制 deploy 脚本到项目内部（如果不存在）
+    refresh_paths
+    if [[ ! -f "$DEPLOY_DIR/deploy.sh" ]]; then
+        mkdir -p "$DEPLOY_DIR"
+        cp "$SCRIPT_DIR/deploy.sh" "$DEPLOY_DIR/deploy.sh" 2>/dev/null || true
+        # 同时复制其他 deploy 文件
+        for f in docker-compose.linux.yml Dockerfile.nginx nginx.linux.conf README.md; do
+            [[ -f "$SCRIPT_DIR/$f" ]] && cp "$SCRIPT_DIR/$f" "$DEPLOY_DIR/" 2>/dev/null || true
+        done
+    fi
+
+    refresh_paths
+    success "项目就绪: $PROJECT_DIR"
 }
 
 # ============================================================
@@ -564,6 +646,9 @@ main() {
         warn "未检测到 Linux 系统，将使用默认 bridge 网络模式"
     fi
 
+    # 如果已定位到项目，刷新路径变量
+    [[ -n "$PROJECT_DIR" ]] && refresh_paths
+
     check_prerequisites
     setup_project
     configure_env
@@ -571,14 +656,29 @@ main() {
     verify_deployment
 }
 
+# 管理命令前置检查：确保项目目录已定位
+ensure_project() {
+    if [[ -z "$PROJECT_DIR" ]]; then
+        # 尝试当前目录
+        if [[ -f "$PWD/docker-compose.yml" && -d "$PWD/backend" ]]; then
+            PROJECT_DIR="$PWD"
+            refresh_paths
+        else
+            error "未找到项目目录，请 cd 到项目根目录后再执行此命令"
+            exit 1
+        fi
+    fi
+    refresh_paths
+}
+
 # 解析命令行参数
 case "${1:-}" in
     --help|-h)    show_help; exit 0 ;;
     --auto)       AUTO_MODE=true; main ;;
-    --uninstall)  detect_os; do_uninstall ;;
-    --status)     do_status ;;
-    --logs)       do_logs ;;
-    --restart)    do_restart ;;
-    --backup)     do_backup ;;
+    --uninstall)  detect_os; ensure_project; do_uninstall ;;
+    --status)     detect_os; ensure_project; do_status ;;
+    --logs)       detect_os; ensure_project; do_logs ;;
+    --restart)    detect_os; ensure_project; do_restart ;;
+    --backup)     ensure_project; do_backup ;;
     *)            main ;;
 esac
